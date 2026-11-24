@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PadProof · 锡膏印刷复核</title>
+  <link rel="stylesheet" href="/static/padproof.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <a class="brand" href="/" aria-label="PadProof">
+      <span class="brand-mark" aria-hidden="true"></span><span><strong>PadProof</strong><small>锡膏印刷复核</small></span>
+    </a>
+    <div class="section-name">板面</div>
+    <button class="accent wide" id="importBoard">＋  导入板面照片</button>
+    <button class="quiet wide" id="demoBoard">载入练习板</button>
+    <nav id="boardList" aria-label="我的板面"><p class="muted">还没有板面</p></nav>
+    <div class="sidebar-footer"><span class="indicator"></span><span>本地图像工作区</span><a href="/prepare">照片准备 ↗</a></div>
+  </aside>
+  <main>
+    <header class="top">
+      <div class="crumb"><span>印刷复核</span><span aria-hidden="true">/</span><strong id="crumbName">板面工作区</strong></div>
+      <div class="actions">
+        <button class="quiet" id="sendPrepare" disabled>送往照片准备 ↗</button>
+        <button class="accent" id="saveReview" disabled>保存复核</button>
+      </div>
+    </header>
+    <section class="title-row">
+      <div><h1 id="boardTitle">板面工作区</h1><p id="boardMeta">将锡膏原片、窗口和复核记录放在一起。</p></div>
+      <a class="quiet action-link" id="downloadOriginal" hidden download>下载原图 ↓</a>
+    </section>
+    <div class="desk">
+      <section class="panel viewer" aria-label="原图查看">
+        <div class="panel-head">
+          <h2>显微原图</h2>
+          <div class="segmented" aria-label="预览模式">
+            <button class="on" type="button" data-view="photo">原片</button>
+            <button type="button" data-view="mask">分盘蒙版</button>
+          </div>
+        </div>
+        <div class="image-stage" id="imageStage">
+          <div class="welcome" id="welcome">
+            <div class="welcome-board" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+            <h3>添加一张板面原图</h3>
+            <p>在原图标记焊盘窗口，查看锡膏覆盖与可疑高光。</p>
+            <button class="accent" id="welcomeDemo">打开练习板 →</button>
+          </div>
+          <div class="canvas-wrap" id="canvasWrap" hidden>
+            <canvas id="stageCanvas" aria-label="板面照片和检测框"></canvas>
+          </div>
+        </div>
+        <div class="viewer-tools">
+          <div class="tool-group" aria-label="图像工具">
+            <button type="button" data-tool="pixel" class="on" title="点击原图读取一个像素">点检</button>
+            <button type="button" data-tool="pads" title="拖拉标出一个焊盘">＋ 焊盘框</button>
+            <button type="button" data-tool="exclusions" title="拖拉遮去灯光眩光或异物">＋ 排除框</button>
+            <button type="button" data-tool="scale" title="在尺标上选择两点">比例尺</button>
+          </div>
+          <div class="zoom-tools">
+            <button id="zoomOut" aria-label="缩小" disabled>−</button><output id="zoomRead">适配</output><button id="zoomIn" aria-label="放大" disabled>＋</button>
+          </div>
+        </div>
+        <div class="canvas-status"><span id="pixelRead" aria-live="polite">导入板面后可在原图点检。</span><span id="imageSize"></span></div>
+      </section>
+      <aside class="inspector">
+        <section class="panel settings-panel">
+          <div class="panel-head"><h2>检测设置</h2><span id="revision"></span></div>
+          <form id="settingsForm">
+            <fieldset id="settingsFields" disabled>
+              <label class="full">亮度阈值 <output id="thresholdValue">143</output><input name="threshold" id="threshold" type="range" min="0" max="255" value="143"></label>
+              <div class="two"><label>待补下限 (%)<input name="low" type="number" min="0" max="100" step="0.1" required value="43"></label><label>超印上限 (%)<input name="high" type="number" min="0" max="100" step="0.1" required value="83"></label></div>
+              <label>比例标定 (px/mm)<input name="scale" type="number" min="0.01" max="100000" step="any" placeholder="未标定"></label>
+              <button class="quiet wide" type="submit">应用设置</button>
+            </fieldset>
+          </form>
+        </section>
+        <section class="panel">
+          <div class="panel-head"><h2>焊盘窗口</h2><span id="padCount">0</span></div>
+          <div id="padList" class="list"><p class="muted">在图上拖拉添加焊盘框。</p></div>
+          <details id="exclusionDetails"><summary>排除区域 <span id="exclusionCount">0</span></summary><div id="exclusionList" class="list"></div></details>
+        </section>
+        <section class="panel histogram">
+          <div class="panel-head"><h2>原图灰度</h2><span id="glareCount"></span></div>
+          <div class="bars" id="histogramBars" aria-label="板面原图灰度直方图"></div>
+          <div class="histogram-axis"><span>0</span><span>255</span></div>
+        </section>
+      </aside>
+      <section class="panel coverage">
+        <div class="panel-head"><h2>铺锡测量</h2><span id="summary">待检测</span></div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>焊盘</th><th>覆盖率</th><th>锡膏 px</th><th>面积 mm²</th><th>颗粒</th><th>空孔</th><th>过亮 px</th><th>复核状态</th></tr></thead>
+            <tbody id="measurements"><tr><td colspan="8" class="muted">添加板面照片和焊盘窗口后显示测量。</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+      <section class="panel reports">
+        <div class="panel-head"><h2>已保存复核</h2><span id="reviewCount">0</span></div>
+        <div id="reviewList" class="list"><p class="muted">复核包含原图、面积表和分盘蒙版。</p></div>
+      </section>
+    </div>
+  </main>
+</div>
+<div id="toast" role="status" aria-live="polite"></div>
+<dialog id="editDialog">
+  <form id="editForm" method="dialog">
+    <div class="panel-head"><h2 id="editTitle">焊盘窗口</h2><button type="button" data-close="editDialog" aria-label="关闭">×</button></div>
+    <div class="dialog-content">
+      <label>窗口名称<input name="name" required maxlength="24"></label>
+      <div class="two">
+        <label>左 X<input name="x0" type="number" required min="0"></label>
+        <label>上 Y<input name="y0" type="number" required min="0"></label>
+        <label>右 X<input name="x1" type="number" required min="0"></label>
+        <label>下 Y<input name="y1" type="number" required min="0"></label>
+      </div>
+    </div>
+    <div class="dialog-footer"><button type="button" id="deleteWindow" class="danger">删除窗口</button><button class="accent" type="submit">保存窗口</button></div>
+  </form>
+</dialog>
+<dialog id="scaleDialog">
+  <form id="scaleForm" method="dialog">
+    <div class="panel-head"><h2>比例尺标定</h2><button type="button" data-close="scaleDialog" aria-label="关闭">×</button></div>
+    <div class="dialog-content"><p id="scaleDistance"></p><label>两点之间的实际长度 (mm)<input name="length" type="number" required min="0.0001" step="any" value="2"></label></div>
+    <div class="dialog-footer"><button class="accent" type="submit">保存比例</button></div>
+  </form>
+</dialog>
+<dialog id="reviewDialog">
+  <div class="panel-head"><h2>已保存复核</h2><button type="button" data-close="reviewDialog" aria-label="关闭">×</button></div>
+  <div class="dialog-content"><p id="reviewDetail"></p><ul id="reviewRows"></ul></div>
+  <div class="dialog-footer"><a class="accent action-link" id="downloadReview" download>下载复核包 ↓</a></div>
+</dialog>
+<input type="file" id="imageFile" accept=".png,.jpg,.jpeg,.tif,.tiff,.bmp,.webp" hidden>
+<script src="/static/padproof.js" defer></script>
+</body>
+</html>
