@@ -55,6 +55,7 @@
             <button type="button" data-tool="pixel" class="on" title="点击原图读取一个像素">点检</button>
             <button type="button" data-tool="pads" title="拖拉标出一个焊盘">＋ 焊盘框</button>
             <button type="button" data-tool="exclusions" title="拖拉遮去灯光眩光或异物">＋ 排除框</button>
+            <button type="button" data-tool="split" title="依次点选两个左右并排的焊盘进行分盘">⇆ 分盘</button>
             <button type="button" data-tool="scale" title="在尺标上选择两点">比例尺</button>
           </div>
           <div class="zoom-tools">
@@ -90,8 +91,8 @@
         <div class="panel-head"><h2>铺锡测量</h2><span id="summary">待检测</span></div>
         <div class="table-scroll">
           <table>
-            <thead><tr><th>焊盘</th><th>覆盖率</th><th>锡膏 px</th><th>面积 mm²</th><th>颗粒</th><th>空孔</th><th>过亮 px</th><th>复核状态</th></tr></thead>
-            <tbody id="measurements"><tr><td colspan="8" class="muted">添加板面照片和焊盘窗口后显示测量。</td></tr></tbody>
+            <thead><tr><th>焊盘</th><th>覆盖率</th><th>锡膏 px</th><th>待核 px</th><th>面积 mm²</th><th>颗粒</th><th>空孔</th><th>过亮 px</th><th>复核状态</th></tr></thead>
+            <tbody id="measurements"><tr><td colspan="9" class="muted">添加板面照片和焊盘窗口后显示测量。</td></tr></tbody>
           </table>
         </div>
       </section>

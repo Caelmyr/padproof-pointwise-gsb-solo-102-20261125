@@ -99,6 +99,7 @@ input:not([type="range"], [type="file"]) { border: 1px solid var(--line); border
 .item-row span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .item-info { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; align-content: center; }
 .item-edit { font-size: 11px; }
+.danger-text { color: #edb0b0; border-color: #5a3c3f; }
 details { border-top: 1px solid var(--line); }
 summary { padding: 10px 13px; color: var(--muted); cursor: pointer; font-size: 12px; }
 details summary span { float: right; }

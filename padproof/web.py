@@ -84,8 +84,24 @@ def create_app(root):
         record = workspace.board(key)
         window = find(record['pads'], pad)
         luminance, useful = inspection.prepare(workspace.pixels(key), record['exclusions'])
-        data = inspection.native_mask(luminance, useful, window, record['settings'])
+        pad_index = record['pads'].index(window)
+        aligned = workspace._pad_splits(record)
+        if aligned[pad_index] is not None:
+            data, _, _ = inspection.split_mask(luminance, useful, record['pads'], aligned,
+                                               pad_index, record['settings'])
+        else:
+            data = inspection.native_mask(luminance, useful, window, record['settings'])
         return send_file(BytesIO(raster.png(data)), mimetype='image/png', max_age=0)
+
+    @api.post('/boards/<key>/splits')
+    def create_split(key):
+        board, split = workspace.create_split(key, body())
+        return jsonify({'board': board, 'split': split}), 201
+
+    @api.delete('/boards/<key>/splits/<split>')
+    def delete_split(key, split):
+        payload = request.get_json(silent=True) or {}
+        return jsonify(workspace.delete_split(key, {**payload, 'split': split}))
 
     @api.route('/boards/<key>/reviews', methods=['GET', 'POST'])
     def reviews(key):

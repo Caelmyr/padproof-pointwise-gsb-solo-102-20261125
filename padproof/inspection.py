@@ -5,6 +5,7 @@ import numpy as np
 
 from image_lab.validation import Invalid, integer, number, text
 
+from . import splitting
 from .raster import gray
 
 DEFAULT_SETTINGS = {'threshold': 143, 'low': 43.0, 'high': 83.0, 'scale': None}
@@ -79,7 +80,7 @@ def verdict(coverage, config):
     return 'pass'
 
 
-def measure(patch, valid, foreground, config):
+def measure(patch, valid, foreground, config, review=None):
     pixels = int(valid.sum())
     paste = int(foreground.sum())
     coverage = 100 * paste / pixels if pixels else None
@@ -87,19 +88,73 @@ def measure(patch, valid, foreground, config):
     cavities, cavity_pixels = holes(foreground, valid)
     scale = config['scale']
     return {'usable_px': pixels, 'paste_px': paste, 'excluded_px': int(valid.size - pixels),
+            'review_px': 0 if review is None else int(review.sum()),
             'coverage': round(coverage, 4) if coverage is not None else None,
             'paste_mm2': round(paste / scale ** 2, 5) if scale is not None else None,
             'state': verdict(coverage, config), 'deposits': deposits, 'largest_px': largest,
             'holes': cavities, 'hole_px': cavity_pixels,
-            'overload_px': int(np.count_nonzero((patch >= 248) & valid))}
+            'overload_px': int(np.count_nonzero((patch >= 248) & valid & foreground))}
 
 
-def inspect(source, pads, exclusions, config):
+def valid_split(splits, pad_index, pad_id, rectangles):
+    """Check a stored split still matches two existing side-by-side windows."""
+    split = splits[pad_index]
+    if split is None:
+        return None
+    partner = split.get('partner')
+    if partner not in rectangles or pad_id not in rectangles:
+        return None
+    try:
+        splitting.side_by_side(rectangles[pad_id], rectangles[partner])
+    except Invalid:
+        return None
+    return split
+
+
+def inspect(source, pads, exclusions, config, splits=None):
     luminance, useful = prepare(source, exclusions)
+    threshold = config['threshold']
     rows = []
-    for pad in pads:
-        patch, valid, foreground = window(luminance, useful, pad, config['threshold'])
-        rows.append({**pad, **measure(patch, valid, foreground, config)})
+    if not splits:
+        for pad in pads:
+            patch, valid, foreground = window(luminance, useful, pad, threshold)
+            rows.append({**pad, **measure(patch, valid, foreground, config)})
+        return rows
+
+    full_foreground = (luminance >= threshold) & useful
+    rectangles = {pad['id']: pad['rect'] for pad in pads}
+    handled = {}
+    review_masks = {}
+    for index, split in enumerate(splits):
+        split = valid_split(splits, index, pads[index]['id'], rectangles)
+        if split is None:
+            continue
+        partner_id = split['partner']
+        if index in handled:
+            continue
+        partner_index = next(i for i, pad in enumerate(pads) if pad['id'] == partner_id)
+        if partner_index in handled:
+            continue
+        left_mask, right_mask, review_mask = splitting.pair_masks(
+            full_foreground, rectangles[pads[index]['id']], rectangles[partner_id], split['seam'])
+        left_index = index if split['left'] == pads[index]['id'] else partner_index
+        right_index = partner_index if left_index == index else index
+        handled[left_index] = left_mask
+        handled[right_index] = right_mask
+        review_masks[left_index] = review_mask
+        review_masks[right_index] = review_mask
+
+    for index, pad in enumerate(pads):
+        section = local_slice(pad['rect'])
+        patch = luminance[section]
+        valid = useful[section]
+        if index in handled:
+            foreground = handled[index][section]
+            review = review_masks[index][section]
+        else:
+            foreground = full_foreground[section] & valid
+            review = None
+        rows.append({**pad, **measure(patch, valid, foreground, config, review)})
     return rows
 
 
@@ -108,6 +163,21 @@ def native_mask(luminance, useful, pad, config):
     mask = np.zeros(luminance.shape, dtype=np.uint8)
     mask[local_slice(pad['rect'])] = foreground.astype(np.uint8) * 255
     return mask
+
+
+def split_mask(luminance, useful, pads, splits, pad_index, config):
+    """Colour-coded full-image mask: white owned paste, amber review islands."""
+    pad = pads[pad_index]
+    split = splits[pad_index]
+    partner = next(item for item in pads if item['id'] == split['partner'])
+    foreground = (luminance >= config['threshold']) & useful
+    left_mask, right_mask, review_mask = splitting.pair_masks(
+        foreground, pad['rect'], partner['rect'], split['seam'])
+    image = np.zeros((*luminance.shape, 3), dtype=np.uint8)
+    owned = left_mask if split['left'] == pad['id'] else right_mask
+    image[owned] = (255, 255, 255)
+    image[review_mask] = (238, 193, 124)
+    return image, owned, review_mask
 
 
 def pixel(source, record, xy):

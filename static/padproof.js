@@ -13,9 +13,18 @@ const context = elements.canvas.getContext('2d');
 const ui = {
   board: null, rowData: [], reviews: [], selected: null, image: null, mask: null,
   drag: null, editing: null, scalePoints: [], scaleDistance: 0, zoom: 1, view: 'photo', tool: 'pixel',
-  loadId: 0, maskId: 0, noticeTimer: 0,
+  splitPick: null, loadId: 0, maskId: 0, noticeTimer: 0,
 };
 const statuses = {pass: '通过', under: '待补', over: '超印', unreadable: '无可测像素'};
+
+function splitOf(padId) {
+  return (ui.board?.splits || []).find(split => split && (split.left === padId || split.right === padId)) || null;
+}
+
+function splitPartnerName(split, padId) {
+  const partnerId = split.left === padId ? split.right : split.left;
+  return ui.board.pads.find(pad => pad.id === partnerId)?.name || '另一焊盘';
+}
 
 function element(tag, value, className) {
   const node = document.createElement(tag);
@@ -95,6 +104,7 @@ async function openBoard(key) {
   ui.mask = null;
   ui.scalePoints = [];
   ui.drag = null;
+  ui.splitPick = null;
   ui.rowData = [];
   ui.reviews = [];
   elements.canvas.width = record.size[0];
@@ -159,13 +169,26 @@ function renderWindows() {
       const row = element('div', undefined, 'item-row');
       const select = element('button', undefined, 'list-select');
       const size = `${item.rect[2] - item.rect[0]} × ${item.rect[3] - item.rect[1]}`;
-      select.append(element('span', item.name), element('span', size, 'item-info'));
+      const split = isPad ? splitOf(item.id) : null;
+      const detail = split ? `⇆ ${splitPartnerName(split, item.id)} · ${size}` : size;
+      select.append(element('span', item.name), element('span', detail, 'item-info'));
       select.setAttribute('aria-current', String(isPad && item.id === ui.selected));
       select.addEventListener('click', invoke(() => isPad ? selectPad(item.id) : openEditor(kind, item)));
-      const edit = element('button', '编辑', 'item-edit');
-      edit.setAttribute('aria-label', `编辑 ${item.name}`);
-      edit.addEventListener('click', () => openEditor(kind, item));
-      row.append(select, edit);
+      row.append(select);
+      if (split && split.left === item.id) {
+        const undo = element('button', '删除分盘', 'item-edit danger-text');
+        undo.setAttribute('aria-label', `删除 ${item.name} 的分盘`);
+        undo.addEventListener('click', invoke(async () => {
+          await changeBoard(await update(boardUrl(`/splits/${split.id}`), 'DELETE', {revision: ui.board.revision}));
+          message('分盘已删除，两个焊盘恢复独立测量。');
+        }));
+        row.append(undo);
+      } else {
+        const edit = element('button', '编辑', 'item-edit');
+        edit.setAttribute('aria-label', `编辑 ${item.name}`);
+        edit.addEventListener('click', () => openEditor(kind, item));
+        row.append(edit);
+      }
       list.append(row);
     }
   }
@@ -176,7 +199,7 @@ function renderRows() {
   list.replaceChildren();
   if (!ui.rowData.length) {
     const blank = element('td', '添加焊盘窗口后显示测量。', 'muted');
-    blank.colSpan = 8;
+    blank.colSpan = 9;
     const tr = element('tr');
     tr.append(blank);
     list.append(tr);
@@ -191,7 +214,9 @@ function renderRows() {
     tr.append(name);
     const values = [
       row.coverage === null ? '—' : `${row.coverage.toFixed(2)}%`,
-      row.paste_px.toLocaleString(), row.paste_mm2?.toFixed(3) || '—',
+      row.paste_px.toLocaleString(),
+      row.review_px ? row.review_px.toLocaleString() : '—',
+      row.paste_mm2?.toFixed(3) || '—',
       row.deposits, row.holes, row.overload_px,
     ];
     for (const value of values) tr.append(element('td', value));
@@ -260,15 +285,49 @@ function box(rect, stroke, fill, dashed, title) {
   context.restore();
 }
 
+function drawSplit(split) {
+  const ratio = elements.canvas.width / (elements.canvas.clientWidth || elements.canvas.width);
+  const [left, top, right, bottom] = split.overlap;
+  context.save();
+  context.fillStyle = '#8fb4ff22';
+  context.fillRect(left, top, right - left, bottom - top);
+  context.strokeStyle = '#9fc0ff';
+  context.lineWidth = ratio * 1.4;
+  context.setLineDash([5 * ratio, 4 * ratio]);
+  context.strokeRect(left, top, right - left, bottom - top);
+  context.setLineDash([]);
+  context.strokeStyle = '#ffd479';
+  context.lineWidth = ratio * 2;
+  context.beginPath();
+  split.seam.forEach((x, index) => {
+    const y = top + index + 0.5;
+    if (index === 0) context.moveTo(x + 0.5, y);
+    else context.lineTo(x + 0.5, y);
+  });
+  context.stroke();
+  context.restore();
+}
+
 function draw() {
   if (!ui.board || !ui.image) return;
   const {width, height} = elements.canvas;
   context.clearRect(0, 0, width, height);
   context.drawImage(ui.mask || ui.image, 0, 0);
   for (const item of ui.board.exclusions) box(item.rect, '#f2bd72', '#94673644', true, null);
+  const activeSplit = ui.selected ? splitOf(ui.selected) : null;
+  for (const split of ui.board.splits || []) {
+    if (split && split !== activeSplit) drawSplit(split);
+  }
   for (const item of ui.board.pads) {
     const active = item.id === ui.selected;
-    box(item.rect, active ? '#ceffd5' : '#99cfad', null, !active, item.name);
+    const paired = splitOf(item.id) !== null;
+    const colour = active ? '#ceffd5' : (paired ? '#8fb4ff' : '#99cfad');
+    box(item.rect, colour, null, !active, item.name);
+  }
+  if (activeSplit) drawSplit(activeSplit);
+  if (ui.splitPick) {
+    const picked = ui.board.pads.find(pad => pad.id === ui.splitPick);
+    if (picked) box(picked.rect, '#ffd479', '#ffd47924', true, `${picked.name} · 再选一个`);
   }
   if (ui.drag) box(dragRect(ui.drag), '#f3d599', '#f3d59924', true, null);
   if (ui.scalePoints.length) {
@@ -311,14 +370,54 @@ function setTool(tool) {
   ui.tool = tool;
   ui.scalePoints = [];
   ui.drag = null;
+  ui.splitPick = null;
   for (const button of document.querySelectorAll('[data-tool]')) button.classList.toggle('on', button.dataset.tool === tool);
   if (ui.board) {
     $('#pixelRead').textContent = {
       pixel: '点击原图查看像素。', pads: '在锡膏周围拖拉一个焊盘容差框。',
-      exclusions: '拖拉一个区域排除眩光或异物。', scale: '在原图尺标上依次点选两个端点。',
+      exclusions: '拖拉一个区域排除眩光或异物。',
+      split: '依次点选两个左右并排、各有独占区的焊盘。', scale: '在原图尺标上依次点选两个端点。',
     }[tool];
   }
   draw();
+}
+
+function padAt(point) {
+  const [x, y] = point;
+  return ui.board.pads.find(item =>
+    item.rect[0] <= x && x < item.rect[2] && item.rect[1] <= y && y < item.rect[3]) || null;
+}
+
+async function chooseSplitPair(point) {
+  const pad = padAt(point);
+  if (!pad) return message('请点在一个焊盘容差框内。');
+  if (!ui.splitPick) {
+    if (splitOf(pad.id)) return message('这个焊盘已参与分盘，请先删除原分盘。');
+    ui.splitPick = pad.id;
+    $('#pixelRead').textContent = `已选 ${pad.name}，再点一个与它左右搭边的焊盘。`;
+    draw();
+    return;
+  }
+  if (pad.id === ui.splitPick) {
+    ui.splitPick = null;
+    draw();
+    return;
+  }
+  const first = ui.splitPick;
+  ui.splitPick = null;
+  try {
+    const result = await update(boardUrl('/splits'), 'POST',
+      {revision: ui.board.revision, left: first, right: pad.id});
+    await changeBoard(result.board);
+    ui.selected = result.split.left;
+    renderWindows();
+    draw();
+    message('分盘已采用，叠边锡膏按连通归属分配，接不回的膏岛已标为待核。');
+    if (ui.view === 'mask') await refreshMask();
+  } catch (error) {
+    draw();
+    throw error;
+  }
 }
 
 function pointer(event) {
@@ -375,9 +474,13 @@ async function refreshReviews() {
 }
 
 function openReview(review) {
-  $('#reviewDetail').textContent = `版本 ${review.board_revision} · 亮度阈值 ${review.settings.threshold} · ${review.rows.length} 个窗口`;
+  const splitCount = (review.splits || []).length;
+  const reviewPixels = review.rows.reduce((sum, row) => sum + (row.review_px || 0), 0);
+  $('#reviewDetail').textContent = `版本 ${review.board_revision} · 亮度阈值 ${review.settings.threshold}`
+    + ` · ${review.rows.length} 个窗口 · ${splitCount} 组分盘 · ${reviewPixels.toLocaleString()} 待核像素`;
   $('#reviewRows').replaceChildren(...review.rows.map(row =>
-    element('li', `${row.name} · ${row.coverage === null ? '无可测像素' : row.coverage.toFixed(2) + '%'} · ${statuses[row.state]}`)));
+    element('li', `${row.name} · ${row.coverage === null ? '无可测像素' : row.coverage.toFixed(2) + '%'}`
+      + ` · ${statuses[row.state]}${row.review_px ? ` · 待核 ${row.review_px.toLocaleString()} px` : ''}`)));
   $('#downloadReview').href = boardUrl(`/reviews/${review.id}/package.zip`);
   if (!elements.review.open) elements.review.showModal();
 }
@@ -447,7 +550,9 @@ elements.canvas.addEventListener('pointerup', invoke(async event => {
     return;
   }
   const point = pointer(event).map((value, index) => Math.min(value, ui.board.size[index] - 1));
-  if (ui.tool === 'pixel') {
+  if (ui.tool === 'split') {
+    await chooseSplitPair(point);
+  } else if (ui.tool === 'pixel') {
     const params = new URLSearchParams({x: point[0], y: point[1]});
     const data = await request(boardUrl(`/pixel?${params}`));
     const membership = data.exclusions.length ? '已排除' : data.windows.join(' / ') || '窗口外';
